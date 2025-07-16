@@ -33,7 +33,6 @@ filter_keywords = [
 
 os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
-# === Simpan data JSON lokal ===
 def append_to_json(data):
     try:
         with open(output_file, "r+", encoding="utf-8") as f:
@@ -49,7 +48,6 @@ def append_to_json(data):
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump([data], f, indent=4)
 
-# === Ekstrak data dari pesan ===
 def extract_field(message, field):
     match = re.search(rf"{field}\s*:\s*(.+)", message, re.IGNORECASE)
     return match.group(1).strip() if match else ""
@@ -73,11 +71,15 @@ def extract_row(item):
     kendala = extract_field(msg, "Desc")
     status = classify_status(msg)
     action = extract_field(msg, "Action") or "-"
-    note = " "
+    note = extract_field(msg, "Note") or "-"
+
+    if "FORWARD TO TECHNICIAN" in msg.upper():
+        status = "done"
+        note = "fwd teknis"
+
     tiket = extract_field(msg, 'Ref')
     return tanggal, [tanggal, waktu, nama, kendala, status, action, note, tiket]
 
-# === Ambil Sheet ID ===
 def get_sheet_id(service, spreadsheet_id, sheet_name):
     spreadsheet = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     for sheet in spreadsheet["sheets"]:
@@ -85,7 +87,6 @@ def get_sheet_id(service, spreadsheet_id, sheet_name):
             return sheet["properties"]["sheetId"]
     return None
 
-# === Upload ke Google Sheets ===
 def upload_to_google_sheets(data):
     if not os.path.exists(service_account_file):
         print(f"[!] {service_account_file} not found!")
@@ -106,9 +107,9 @@ def upload_to_google_sheets(data):
             grouped[current_date].append(row)
 
         color_map = {
-            "open":   {"red": 0.7, "green": 0.9, "blue": 1.0},  # light blue
-            "proses": {"red": 0.8, "green": 1.0, "blue": 0.8},  # light green
-            "done":   {"red": 1.0, "green": 1.0, "blue": 1.0},  # white
+            "open":   {"red": 0.0, "green": 0.6, "blue": 1.0},  # biru terang
+            "proses": {"red": 0.0, "green": 1.0, "blue": 0.0},  # hijau terang
+            "done":   {"red": 1.0, "green": 1.0, "blue": 0.8},  # krem/putih
         }
 
         for sheet_name, rows in grouped.items():
@@ -189,13 +190,13 @@ def upload_to_google_sheets(data):
                     match = re.search(rf"{sheet_name}!A(\d+)", append_result["updates"]["updatedRange"])
                     if match:
                         row_idx = int(match.group(1))
-
+                        print(f"Adding color to row {row_idx}, status={status}")
                         if status in color_map:
                             format_requests.append({
                                 "repeatCell": {
                                     "range": {
                                         "sheetId": sheet_id,
-                                        "startRowIndex": row_idx - 1,
+                                        "startRowIndex": row_idx-1,
                                         "endRowIndex": row_idx,
                                         "startColumnIndex": 4,
                                         "endColumnIndex": 5
@@ -211,6 +212,9 @@ def upload_to_google_sheets(data):
 
             if format_requests:
                 sheet.batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": format_requests}).execute()
+                print("Colors applied successfully.")
+            else:
+                print("No formatting requests to apply.")
 
         return True
 
@@ -218,9 +222,7 @@ def upload_to_google_sheets(data):
         print(f"[!] Upload failed: {e}")
         return False
 
-# === Telegram Listener ===
 jakarta_tz = timezone("Asia/Jakarta")
-
 client = TelegramClient(session_name, api_id, api_hash)
 
 @client.on(events.NewMessage(chats=target_group_name))
@@ -239,7 +241,6 @@ async def handle_message(event):
                 print(f"{'+' if success else '!'} {'Uploaded' if success else 'Failed to upload'} to Google Sheets")
                 break
 
-# === Jalankan ===
 def main():
     print("[*] Connecting to Telegram...")
     with client:
