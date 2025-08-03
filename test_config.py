@@ -3,7 +3,7 @@ import asyncio
 from time import sleep
 import re
 
-# Akses OLT
+# --- GLOBAL VARIABLES & INITIAL SETUP ---
 print("#####################2####################################")
 print("# APLIKASI AUTO-CONFIGURE ONT BY DIMAS #")
 print("#########################################################")
@@ -22,6 +22,7 @@ olt = int(input("👀 MASUKKAN PILIHAN : "))
 username = 'n0c'
 password = 'j46u4r@2025'
 c600 = False
+
 match(olt):
     case 1:
         ip = "192.168.12.1"
@@ -64,361 +65,240 @@ match(olt):
         print('Maaf, input tidak dimengerti')
         exit()
 
-async def main():
+# --- ASYNC FUNCTIONS ---
+
+async def connect_to_olt(ip, username, password):
+    print("Connecting to OLT...")
     reader, writer = await telnetlib3.open_connection(ip, 23)
     writer.write(username + '\n')
-    sleep(0.5)
+    await asyncio.sleep(0.5)
     writer.write(password + '\n')
+    await asyncio.sleep(0.5)
+    return reader, writer
+
+async def find_uncfg_onu(reader, writer, c600):
     uncfg_ONT = []
     while True:
         if c600:
             writer.write("show pon onu uncfg" + '\n')
-            try:
-                while True:
-                    output = await asyncio.wait_for(reader.readline(), 2)
-                    if 'GPON' in output:
-                        uncfg_ONT.append(output)
-            except asyncio.exceptions.TimeoutError:
-                pass
+            identifier = 'GPON'
         else:
             writer.write("show gpon onu uncfg" + '\n')
-            try:
-                while True:
-                    output = await asyncio.wait_for(reader.readline(), 2)
-                    if 'unknown' in output:
-                        uncfg_ONT.append(output)
-            except asyncio.exceptions.TimeoutError:
-                pass
-        if uncfg_ONT == []:
-            print("Unconfigured ONT tidak terdeteksi")
-            cek = input("Apakah anda ingin mencoba deteksi ulang(Y/N)? ").upper()
-            match(cek):
-                case 'Y':
-                    pass
-                case 'N':
-                    return None
-                case _:
-                    print('Maaf, input tidak dimengerti')
-                    return None
-        else:
-            break
-    
-    listed_uncfg = []
-    for item in uncfg_ONT:
-        if c600:
-            x = item.replace("    ", " ")
-            x = x.replace(" ", ';')
-            splitter_1 = re.split(";", x)
-            splitter_2 = re.split("/", splitter_1[0])
-            if int(splitter_2[2]) < 10:
-                if int(splitter_2[2]) < 10:
-                    sn = splitter_1[2]
-                else:
-                    sn = splitter_1[1]
-            else:
-                sn = splitter_1[1]
-            while True:
-                cek = input(f"Apakah {sn} adalah yang dicari(Y/N)? ").upper()
-                match(cek):
-                    case 'Y':
-                        listed_uncfg.append(sn)
-                        listed_uncfg.append(splitter_2[1])
-                        listed_uncfg.append(splitter_2[2])
-                        break
-                    case 'N':
-                        break
-                    case _:
-                        print("Maaf input hanya Y atau N")
-            if listed_uncfg != []:
-                break
-        else:
-            x = item.replace("        ", " ")
-            x = x.replace(" ", ';')
-            splitter_1 = re.split(";", x)
-            splitter_2 = re.split("/", splitter_1[0])
-            splitter_3 = re.split(":", splitter_2[2])
-            if int(splitter_3[0]) < 10:
-                sn = splitter_1[2]
-            else:
-                sn = splitter_1[1]
-            while True:
-                cek = input(f"Apakah {sn} adalah yang dicari(Y/N)? ").upper()
-                match(cek):
-                    case 'Y':
-                        listed_uncfg.append(sn)
-                        listed_uncfg.append(splitter_2[1])
-                        listed_uncfg.append(splitter_3[0])
-                        break
-                    case 'N':
-                        break
-                    case _:
-                        print("Maaf input hanya Y atau N")
-            if listed_uncfg != []:
-                break
-
-    if listed_uncfg == []:
-        print("Maaf SN tidak ditemukan")
-        return None
-    else:
-        print("\nMengecek utilisasi bandwidth pada port OLT...")
-        writer.write("terminal length 0\n")
-        await asyncio.sleep(0.3)
-        writer.write(f"show pon bandwidth dba interface gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
-        await asyncio.sleep(1)
-
-        rate_percentage = 0.0
-        THRESHOLD_RATE = 75.0
-
-        try:
-            while True:
-                output_bw = await asyncio.wait_for(reader.readline(), 3)
-                if '#' in output_bw or '>' in output_bw or "invalid" in output_bw.lower():
-                    break
-                match_rate = re.search(r'gpon-olt_1/' + re.escape(listed_uncfg[1]) + r'/' + re.escape(listed_uncfg[2]) + r'\s+1\(GPON\)\s+\d+\s+\d+\s+(\d+\.\d+)%', output_bw)
-                if match_rate:
-                    rate_percentage = float(match_rate.group(1))
-                    break
-        except asyncio.exceptions.TimeoutError:
-            pass
-
-        dba_profile_suffix = "MBW"
-        if rate_percentage < THRESHOLD_RATE:
-            dba_profile_suffix = "FIX"
-
-        prev_onu = None
-        print("1. F670L")
-        print("2. C-DATA")
-        while True:
-            modem = int(input("🛜 Pilih Jenis Modem : "))
-            match(modem):
-                case 1:
-                    jenismodem = "ZTE"
-                    break
-                case 2:
-                    jenismodem = "C-DATA"
-                    break
-                case _:
-                    print("Maaf input tidak dimengerti")
-        writer.write("terminal length 200\n")
-        await asyncio.sleep(0.3)
-
-        calculation = "1"
-        prev_onu = None
-        if c600:
-            identifier = 'enable'
-            writer.write(f"show gpon onu state gpon_olt-1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
-        else:
-            identifier = '1(GPON)'
-            writer.write(f"show gpon onu state gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
-        
+            identifier = 'unknown'
         try:
             while True:
                 output = await asyncio.wait_for(reader.readline(), 2)
-
-                if "no related information to show" in output.lower() or "error" in output.lower():
-                    calculation = "1"
-                    print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:1")
-                    break
-                
-                if '#' in output or '>' in output:
-                    if prev_onu is None:
-                        print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:1")
-                        calculation = "1"
-                    else:
-                        calculation = prev_onu + 1
-                        print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
-                    break
-
                 if identifier in output:
-                    try:
-                        parts = re.split(" ", output.strip())
-                        if len(parts) > 0:
-                            onu_port_str = parts[0]
-                            onu_parts = onu_port_str.split(":")
-                            if len(onu_parts) > 1:
-                                current_onu = int(onu_parts[1])
-                                if prev_onu is not None and current_onu > prev_onu + 1:
-                                    calculation = prev_onu + 1
-                                    print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
-                                    break
-                                prev_onu = current_onu
-                    except (ValueError, IndexError):
-                        continue
-                elif "ONU Number:" in output:
-                    if prev_onu is not None:
-                        calculation = prev_onu + 1
-                        print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
-                    else:
-                        calculation = "1"
-                        print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:1")
-                    break
-
+                    uncfg_ONT.append(output)
         except asyncio.exceptions.TimeoutError:
-            print(f"Timeout: Tidak ada ONU terdeteksi pada port 1/{listed_uncfg[1]}/{listed_uncfg[2]}.")
-            print(f"Asumsi ONU kosong: 1")
-            calculation = "1"
-
-        nama_pelanggan = input("👤 MASUKKAN NAMA PELANGGAN : ")
-        alamat = input("📍 MASUKKAN ALAMAT PELANGGAN : ")
-        pppoe = input("🌐 MASUKKAN NOMOR ID PELANGGAN : ")
-        pass_ONT = input("🔒 MASUKKAN PASSWORD PPPOE : ")
-        print("1. 10M")
-        print("2. 15M")
-        print("3. 20M")
-        print("4. 25M")
-        print("5. 30M")
-        print("6. 35M")
-        print("7. 40M")
-        print("8. 45M")
-        print("9. 50M")
-        print("10. 75M")
-        print("11. 100M")
-        cek = int(input("PILIH PAKET PELANGGAN : "))
-
-        match(cek):
-            case 1:
-                paket = "10"
-            case 2:
-                paket = "15"
-            case 3:
-                paket = "20"
-            case 4:
-                paket = "25"
-            case 5:
-                paket = "30"
-            case 6:
-                paket = "35"
-            case 7:
-                paket = "40"
-            case 8:
-                paket = "45"
-            case 9:
-                paket = "50"
-            case 10:
-                paket = "75"
-            case 11:
-                paket = "100"
-            case _:
-                print("Paket internet tidak ditemukan")
+            pass
+        if not uncfg_ONT:
+            print("Unconfigured ONT tidak terdeteksi")
+            cek = input("Apakah anda ingin mencoba deteksi ulang(Y/N)? ").upper()
+            if cek != 'Y':
                 return None
-
-        print("PROSES KONFIGURASI.....")
+        else:
+            break
+    for item in uncfg_ONT:
         if c600:
-            writer.write("configure terminal\n")
+            x = item.replace("    ", " ").replace(" ", ';')
+            splitter_1 = re.split(";", x)
+            splitter_2 = re.split("/", splitter_1[0])
+            sn = splitter_1[2] if int(splitter_2[2]) < 10 else splitter_1[1]
+        else:
+            x = item.replace("        ", " ").replace(" ", ';')
+            splitter_1 = re.split(";", x)
+            splitter_2 = re.split("/", splitter_1[0])
+            splitter_3 = re.split(":", splitter_2[2])
+            sn = splitter_1[2] if int(splitter_3[0]) < 10 else splitter_1[1]
+        while True:
+            cek = input(f"Apakah {sn} adalah yang dicari(Y/N)? ").upper()
+            if cek == 'Y':
+                slot = splitter_2[1]
+                port = splitter_2[2] if c600 else splitter_3[0]
+                return [sn, slot, port]
+            elif cek == 'N':
+                break
+            else:
+                print("Maaf input hanya Y atau N")
+    print("Maaf SN tidak ditemukan")
+    return None
+
+async def get_onu_placement(reader, writer, listed_uncfg, c600):
+    existing_onus = set()
+    writer.write("terminal length 0\n")
+    await asyncio.sleep(0.3)
+    if c600:
+        writer.write(f"show gpon onu state gpon_olt-1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
+    else:
+        writer.write(f"show gpon onu state gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
+    try:
+        while True:
+            output = await asyncio.wait_for(reader.readline(), 2)
+            if '#' in output or '>' in output:
+                break
+            match = re.search(r':(\d+)', output)
+            if match:
+                existing_onus.add(int(match.group(1)))
+    except asyncio.exceptions.TimeoutError:
+        pass
+    writer.write("terminal length 200\n")
+    await asyncio.sleep(0.3)
+    onu_number = "1"
+    if existing_onus:
+        for i in range(1, 129):
+            if i not in existing_onus:
+                onu_number = str(i)
+                break
+        else:
+            onu_number = str(max(existing_onus) + 1)
+    print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{onu_number}")
+    return onu_number
+
+async def get_dba_profile_suffix(reader, writer, listed_uncfg):
+    print("\nMengecek utilisasi bandwidth pada port OLT...")
+    writer.write("terminal length 0\n")
+    await asyncio.sleep(0.3)
+    writer.write(f"show pon bandwidth dba interface gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
+    await asyncio.sleep(1)
+    rate_percentage = 0.0
+    THRESHOLD_RATE = 75.0
+    try:
+        while True:
+            output_bw = await asyncio.wait_for(reader.readline(), 3)
+            if '#' in output_bw or '>' in output_bw or "invalid" in output_bw.lower():
+                break
+            match_rate = re.search(r'gpon-olt_1/' + re.escape(listed_uncfg[1]) + r'/' + re.escape(listed_uncfg[2]) + r'\s+1\(GPON\)\s+\d+\s+\d+\s+(\d+\.\d+)%', output_bw)
+            if match_rate:
+                rate_percentage = float(match_rate.group(1))
+                break
+    except asyncio.exceptions.TimeoutError:
+        pass
+    writer.write("terminal length 200\n")
+    await asyncio.sleep(0.3)
+    return "MBW" if rate_percentage >= THRESHOLD_RATE else "FIX"
+
+async def create_dba_profile(reader, writer, dba_profile_suffix, paket):
+    print("Membuat DBA Profile...")
+    writer.write("configure terminal\n")
+    await asyncio.sleep(0.3)
+    writer.write("gpon\n")
+    await asyncio.sleep(0.3)
+    paket_int = int(paket)
+    if dba_profile_suffix == "MBW":
+        if 1 <= paket_int <= 35:
+            writer.write(f"profile tcont UP-{paket}MB-MBW type 1 assured 5000 maximum 30000\n")
             await asyncio.sleep(0.3)
-            if jenismodem == "C-DATA":
-                writer.write(f"interface gpon_olt-1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"onu {calculation} type ALL sn {listed_uncfg[0]}\n")
-                sleep(1.5)
-                writer.write("exit\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"interface gpon_onu-1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"name {nama_pelanggan}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"description {alamat}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"tcont 1 name PPPOE profile UP-{paket}MB-{dba_profile_suffix}\n")
-                await asyncio.sleep(0.3)
-                writer.write("gemport 1 name PPPOE tcont 1\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"exit\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"interface vport-1/{listed_uncfg[1]}/{listed_uncfg[2]}.{calculation}:1\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"service-port 1 user-vlan {vlan} vlan {vlan}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"qos traffic-policy DOWN-{paket} direction egress\n")
-                await asyncio.sleep(0.3)
-                writer.write("exit\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"pon-onu-mng gpon_onu-1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"service CIGNAL gemport 1 vlan {vlan}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"wan-ip ipv4 mode pppoe username {pppoe} password {pass_ONT} vlan-profile vlan{vlan} host 1\n")
-                await asyncio.sleep(0.3)
-                writer.write("security-mgmt 2 ingress-type wan mode forward state enable protocol web\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/1 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/2 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/3 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/4 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"exit\n")
-                await asyncio.sleep(0.3)
-            else: 
-                writer.write(f"interface gpon_olt-1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"onu {calculation} type ALL sn {listed_uncfg[0]}\n")
-                sleep(1.5)
-                writer.write("exit\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"interface gpon_onu-1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
-                writer.write(f"name {nama_pelanggan}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"description {alamat}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"tcont 1 name PPPOE profile UP-{paket}MB-{dba_profile_suffix}\n")
-                await asyncio.sleep(0.3)
-                writer.write("gemport 1 name PPPOE tcont 1\n")
-                await asyncio.sleep(0.3)
-                writer.write("exit\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"interface vport-1/{listed_uncfg[1]}/{listed_uncfg[2]}.{calculation}:1\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"service-port 1 user-vlan {vlan} vlan {vlan}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"qos traffic-policy DOWN-{paket} direction egress\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"exit\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"pon-onu-mng gpon_onu-1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"service CIGNAL gemport 1 vlan {vlan}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"wan-ip 1 ipv4 mode pppoe username {pppoe} password {pass_ONT} vlan-profile vlan{vlan} host 1\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"wan-ip 1 ipv4 ping-response enable traceroute-response enable\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"security-mgmt 2 ingress-type wan mode forward state enable protocol web\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/1 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/2 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/3 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/4 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"exit\n")
-                await asyncio.sleep(0.3)
-        else:  # Not C300 (likely Fiberhome)
+        elif paket_int > 35:
+            writer.write(f"profile tcont UP-{paket}MB-MBW type 5 fixed 15000 assured 10000 maximum {paket}000\n")
+            await asyncio.sleep(0.3)
+    else:
+        if 1 <= paket_int <= 35:
+            writer.write(f"profile tcont UP-{paket}MB-FIX type 1 fixed {paket}000\n")
+            await asyncio.sleep(0.3)
+        elif paket_int > 35:
+            writer.write(f"profile tcont UP-{paket}MB-FIX type 1 fixed {paket}000\n")
+            await asyncio.sleep(0.3)
+
+    writer.write("exit\n")
+    await asyncio.sleep(0.3)
+    writer.write("exit\n")
+    await asyncio.sleep(0.3)
+    print(f"✅ DBA profile UP-{paket}MB-{dba_profile_suffix} telah berhasil dibuat.")
+
+async def register_onu(reader, writer, listed_uncfg, calculation, jenismodem, nama_pelanggan, alamat, c600):
+    print("PROSES KONFIGURASI ...")
+    writer.write("configure terminal\n")
+    await asyncio.sleep(0.3)
+    if c600:
+        writer.write(f"interface gpon_olt-1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
+        await asyncio.sleep(0.3)
+        writer.write(f"onu {calculation} type ALL sn {listed_uncfg[0]}\n")
+        await asyncio.sleep(1.5)
+        writer.write("exit\n")
+        await asyncio.sleep(0.3)
+        writer.write(f"interface gpon_onu-1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
+        await asyncio.sleep(0.3)
+    else:
+        writer.write(f"interface gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
+        await asyncio.sleep(0.3)
+        writer.write(f"onu {calculation} type ZTEG-F609 sn {listed_uncfg[0]}\n")
+        await asyncio.sleep(1.5)
+        writer.write("exit\n")
+        await asyncio.sleep(0.3)
+        writer.write(f"interface gpon-onu_1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
+        await asyncio.sleep(0.3)
+
+    writer.write(f"name {nama_pelanggan}\n")
+    await asyncio.sleep(0.3)
+    writer.write(f"description {alamat}\n")
+    await asyncio.sleep(0.3)
+    writer.write("exit\n")
+    await asyncio.sleep(0.3)
+    writer.write("exit\n") # Exit configure terminal
+    await asyncio.sleep(0.3)
+
+async def configure_onu_services(reader, writer, listed_uncfg, calculation, jenismodem, paket, pppoe, pass_ONT, vlan, c600, dba_profile_suffix, nama_pelanggan, alamat, olt_name):
+    needs_profile_creation = False
+    
+    writer.write("configure terminal\n")
+    await asyncio.sleep(0.3)
+    
+    if c600:
+        writer.write(f"interface gpon_onu-1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
+        await asyncio.sleep(0.3)
+        writer.write(f"tcont 1 name PPPOE profile UP-{paket}MB-{dba_profile_suffix}\n")
+        await asyncio.sleep(0.3)
+        try:
+            output = await asyncio.wait_for(reader.readline(), 1)
+            if "exceed" in output.lower() or "tcont-profile not found" in output.lower():
+                print("🚨 ERROR: DBA profile tidak ditemukan atau kapasitas penuh.")
+                needs_profile_creation = True
+        except asyncio.exceptions.TimeoutError:
+            pass
+        if not needs_profile_creation:
+            writer.write("gemport 1 name CIGNAL tcont 1\n")
+            await asyncio.sleep(0.3)
+            writer.write("exit\n")
+            await asyncio.sleep(0.3)
+            writer.write(f"interface vport-1/{listed_uncfg[1]}/{listed_uncfg[2]}.{calculation}:1\n")
+            await asyncio.sleep(0.3)
+            writer.write(f"service-port 1 user-vlan {vlan} vlan {vlan}\n")
+            await asyncio.sleep(0.3)
+            writer.write(f"qos traffic-policy DOWN-{paket} direction egress\n")
+            await asyncio.sleep(0.3)
+            writer.write("exit\n")
+            await asyncio.sleep(0.3)
+            writer.write(f"pon-onu-mng gpon_onu-1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
+            await asyncio.sleep(0.3)
+            writer.write(f"service CIGNAL gemport 1 vlan {vlan}\n")
+            await asyncio.sleep(0.3)
+            writer.write(f"wan-ip ipv4 mode pppoe username {pppoe} password {pass_ONT} vlan-profile vlan{vlan} host 1\n")
+            await asyncio.sleep(0.3)
+            writer.write("security-mgmt 2 ingress-type wan mode forward state enable protocol web\n")
+            await asyncio.sleep(0.3)
+    
+    #== C-DATA ==
+    else:
+        writer.write(f"interface gpon-onu_1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
+        await asyncio.sleep(0.3)
+        writer.write(f"tcont 1 name PPPOE profile UP-{paket}MB-{dba_profile_suffix}\n")
+        await asyncio.sleep(0.3)
+        try:
+            output = await asyncio.wait_for(reader.readline(), 1)
+            if "exceed" in output.lower() or "tcont-profile not found" in output.lower():
+                print("🚨 ERROR: DBA profile tidak ditemukan atau kapasitas penuh.")
+                needs_profile_creation = True
+        except asyncio.exceptions.TimeoutError:
+            pass
+        
+        if not needs_profile_creation:
+            writer.write("gemport 1 name PPPOE tcont 1\n")
+            await asyncio.sleep(0.3)
+            writer.write(f"gemport 1 traffic-limit downstream DOWN-{paket}\n")
+            await asyncio.sleep(0.3)
+            
             if jenismodem == "ZTE":
-                writer.write("configure terminal\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"interface gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"onu {calculation} type ZTEG-F609 sn {listed_uncfg[0]} vport-mode gemport\n")
-                sleep(1.5)
-                writer.write("exit\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"interface gpon-onu_1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"name {nama_pelanggan}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"description {alamat}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"tcont 1 name PPPOE profile UP-{paket}MB-{dba_profile_suffix}\n")
-                await asyncio.sleep(0.3)
-                writer.write("gemport 1 name PPPOE tcont 1\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"gemport 1 traffic-limit downstream DOWN-{paket}\n")
-                await asyncio.sleep(0.3)
                 writer.write("switchport mode hybrid vport 1\n")
                 await asyncio.sleep(0.3)
                 writer.write(f"service-port 1 vport 1 user-vlan {vlan} vlan {vlan}\n")
@@ -457,41 +337,13 @@ async def main():
                 await asyncio.sleep(0.3)
                 writer.write("security-mgmt 2 ingress-type wan mode forward state enable protocol web\n")
                 await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/1 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/2 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/3 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"int eth eth_0/4 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write("exit\n")
-                await asyncio.sleep(0.3)
-            else:  # This is likely for Fiberhome C-DATA or other types not specifically ZTE on Fiberhome OLT
-                writer.write("configure terminal\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"interface gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"onu {calculation} type ZTEG-F609 sn {listed_uncfg[0]}\n")
-                sleep(1.5)
-                writer.write("exit\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"interface gpon-onu_1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
-                writer.write(f"name {nama_pelanggan}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"description {alamat}\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"tcont 1 name PPPOE profile UP-{paket}MB-{dba_profile_suffix}\n")
-                await asyncio.sleep(0.3)
-                writer.write("gemport 1 name PPPOE tcont 1\n")
-                await asyncio.sleep(0.3)
-                writer.write(f"gemport 1 traffic-limit downstream DOWN-{paket}M\n")
-                await asyncio.sleep(0.3)
+            
+            else:
                 writer.write("encrypt 1 enable downstream\n")
                 await asyncio.sleep(0.3)
                 writer.write(f"service-port 1 vport 1 user-vlan {vlan} vlan {vlan}\n")
                 await asyncio.sleep(0.3)
-                writer.write(f"exit\n")
+                writer.write("exit\n")
                 await asyncio.sleep(0.3)
                 writer.write(f"pon-onu-mng gpon-onu_1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
                 await asyncio.sleep(0.3)
@@ -507,30 +359,99 @@ async def main():
                 await asyncio.sleep(0.3)
                 writer.write("security-mgmt 2 ingress-type wan mode forward state enable protocol web\n")
                 await asyncio.sleep(0.3)
-                writer.write("int eth eth_0/1 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write("int eth eth_0/2 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write("int eth eth_0/3 sta lock\n")
-                await asyncio.sleep(0.3)
-                writer.write("int eth eth_0/4 sta lock\n")
-                await asyncio.sleep(0.3)
+    
+    if not needs_profile_creation:
+        writer.write("int eth eth_0/1 sta lock\n")
+        await asyncio.sleep(0.3)
+        writer.write("int eth eth_0/2 sta lock\n")
+        await asyncio.sleep(0.3)
+        writer.write("int eth eth_0/3 sta lock\n")
+        await asyncio.sleep(0.3)
+        writer.write("int eth eth_0/4 sta lock\n")
+        await asyncio.sleep(0.3)
+        writer.write("exit\n")
+        await asyncio.sleep(0.3)
+        writer.write("exit\n")
+        await asyncio.sleep(0.3)
 
-        try:
-            while True:
-                output2 = await asyncio.wait_for(reader.readline(), 2)
-                print(output2)
-        except asyncio.exceptions.TimeoutError:
-            pass
-        print("KONFIGURASI SELESAI")
+    try:
+        while True:
+            output = await asyncio.wait_for(reader.readline(), 2)
+            print(output.strip())
+    except asyncio.exceptions.TimeoutError:
+        pass
+    
+    if not needs_profile_creation:
+        print("\nKONFIGURASI SELESAI")
         print(f"✅ Serial Number : {listed_uncfg[0]}")
         print(f"✅ ID pelanggan : {pppoe}")
         print(f"✅ Nama pelanggan : {nama_pelanggan}")
         print(f"✅ OLT dan ONU : {olt_name} 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
-        print(f"✅ DBA Profile Used : {dba_profile_suffix}")
 
-        writer.write("exit\n")
-        await asyncio.sleep(0.5)
+    return needs_profile_creation
+
+
+async def main():
+    reader, writer = await connect_to_olt(ip, username, password)
+    listed_uncfg = await find_uncfg_onu(reader, writer, c600)
+    if listed_uncfg is None:
         writer.close()
+        return
 
-asyncio.run(main())
+    print("1. F670L")
+    print("2. C-DATA")
+    while True:
+        try:
+            modem = int(input("🛜 Pilih Jenis Modem : "))
+            if modem in [1, 2]:
+                jenismodem = "ZTE" if modem == 1 else "C-DATA"
+                break
+            print("Maaf input tidak dimengerti")
+        except ValueError:
+            print("Input harus berupa angka.")
+
+    calculation = await get_onu_placement(reader, writer, listed_uncfg, c600)
+    dba_profile_suffix = await get_dba_profile_suffix(reader, writer, listed_uncfg)
+
+    nama_pelanggan = input("👤 MASUKKAN NAMA PELANGGAN : ")
+    alamat = input("📍 MASUKKAN ALAMAT PELANGGAN : ")
+    pppoe = input("🌐 MASUKKAN NOMOR ID PELANGGAN : ")
+    pass_ONT = input("🔒 MASUKKAN PASSWORD PPPOE : ")
+
+    print("PILIH PAKET PELANGGAN:")
+    print("1. 10M")
+    print("2. 15M")
+    print("3. 20M")
+    print("4. 25M")
+    print("5. 30M")
+    print("6. 35M")
+    print("7. 40M")
+    print("8. 45M")
+    print("9. 50M+")
+    while True:
+        try:
+            cek = int(input("PILIH PAKET PELANGGAN : "))
+            paket_map = {1: "10", 2: "15", 3: "20", 4: "25", 5: "30", 6: "35", 7: "40", 8: "45", 9: "100"}
+            paket = paket_map.get(cek)
+            if paket:
+                break
+            else:
+                print("Paket internet tidak ditemukan. Silakan pilih nomor dari 1-9.")
+        except ValueError:
+            print("Input tidak valid. Silakan masukkan angka.")
+    
+    await register_onu(reader, writer, listed_uncfg, calculation, jenismodem, nama_pelanggan, alamat, c600)
+
+    needs_profile_creation = await configure_onu_services(reader, writer, listed_uncfg, calculation, jenismodem, paket, pppoe, pass_ONT, vlan, c600, dba_profile_suffix, nama_pelanggan, alamat, olt_name)
+    
+    if needs_profile_creation:
+        await create_dba_profile(reader, writer, dba_profile_suffix, paket)
+        print("\nRetrying service configuration with the new DBA profile...")
+        await configure_onu_services(reader, writer, listed_uncfg, calculation, jenismodem, paket, pppoe, pass_ONT, vlan, c600, dba_profile_suffix, nama_pelanggan, alamat, olt_name)
+    
+    writer.write("exit\n")
+    await asyncio.sleep(0.5)
+    writer.close()
+
+if __name__ == '__main__':
+    asyncio.run(main())
