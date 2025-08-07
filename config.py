@@ -184,28 +184,57 @@ async def get_onu_placement(reader, writer, listed_uncfg, c600):
 
     return calculation
 
-async def get_dba_profile_suffix(reader, writer, listed_uncfg):
+async def get_dba_profile_suffix(reader, writer, listed_uncfg, c600):
     print("\nMengecek utilisasi bandwidth pada port OLT...")
     writer.write("terminal length 0\n")
+    await writer.drain()
     await asyncio.sleep(0.3)
-    writer.write(f"show pon bandwidth dba interface gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
+
+    # Siapkan perintah dan regex sesuai jenis OLT
+    if c600:
+        interface_str = f"gpon_olt-1/{listed_uncfg[1]}/{listed_uncfg[2]}"
+        command = f"show pon bandwidth dba interface {interface_str}\n"
+        regex_pattern = rf"{re.escape(interface_str)}\s+\S+\s+(\d+)\s+(\d+)\s+(\d+\.\d+)"
+    else:
+        interface_str = f"gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}"
+        command = f"show pon bandwidth dba interface {interface_str}\n"
+        regex_pattern = rf"{re.escape(interface_str)}\s+\S+\s+(\d+)\s+(\d+)\s+(\d+\.\d+)"
+
+    # Kirim perintah cek bandwidth
+    writer.write(command)
+    await writer.drain()
     await asyncio.sleep(1)
+
     rate_percentage = 0.0
-    THRESHOLD_RATE = 80.0
+    THRESHOLD_RATE = 75.0
+
     try:
         while True:
-            output_bw = await asyncio.wait_for(reader.readline(), 3)
-            if '#' in output_bw or '>' in output_bw or "invalid" in output_bw.lower():
+            output_bw = await asyncio.wait_for(reader.readline(), timeout=3)
+            if not output_bw:
                 break
-            match_rate = re.search(r'gpon-olt_1/' + re.escape(listed_uncfg[1]) + r'/' + re.escape(listed_uncfg[2]) + r'\s+1\(GPON\)\s+\d+\s+\d+\s+(\d+\.\d+)%', output_bw)
-            if match_rate:
-                rate_percentage = float(match_rate.group(1))
-                break
-    except asyncio.exceptions.TimeoutError:
-        pass
-    writer.write("terminal length 200\n")
-    await asyncio.sleep(0.3)
-    return "MBW" if rate_percentage >= THRESHOLD_RATE else "FIX"
+
+            output_str = output_bw.strip()
+
+            match = re.search(regex_pattern, output_str)
+            if match:
+                configured = int(match.group(1))
+                free = int(match.group(2))
+                rate = float(match.group(3))
+
+                used = configured - free
+                utilization = (used / configured) * 100
+
+                print(f"Configured: {configured}, Free: {free}, Used: {used}, Utilization: {utilization:.1f}%, Rate: {rate:.1f}%")
+
+                # Langsung return nilai FIX atau MBW
+                return "MBW" if rate >= THRESHOLD_RATE else "FIX"
+
+    except asyncio.TimeoutError:
+        print("❌ Timeout saat membaca output bandwidth dari OLT.")
+
+    print(f"Final rate percentage: {rate_percentage}%")
+    return "FIX"
 
 async def create_dba_profile(reader, writer, dba_profile_suffix, paket):
     print("Membuat DBA Profile...")
@@ -264,7 +293,7 @@ async def register_onu(reader, writer, listed_uncfg, calculation, jenismodem, na
     await asyncio.sleep(0.3)
     writer.write("exit\n")
     await asyncio.sleep(0.3)
-    writer.write("exit\n") # Exit configure terminal
+    writer.write("exit\n")
     await asyncio.sleep(0.3)
 
 async def configure_onu_services(reader, writer, listed_uncfg, calculation, jenismodem, paket, pppoe, pass_ONT, vlan, c600, dba_profile_suffix, nama_pelanggan, alamat, olt_name):
@@ -280,7 +309,7 @@ async def configure_onu_services(reader, writer, listed_uncfg, calculation, jeni
         await asyncio.sleep(0.3)
         try:
             output = await asyncio.wait_for(reader.readline(), 1)
-            if "Profile exceed" in output.lower() or "Profile does not exist" in output.lower():
+            if "Parameter exceeds range" in output.lower() or "Profile does not exist" in output.lower():
                 print("🚨 Utilisasi port penuh, reconfig dengan mode MBW")
                 needs_profile_creation = True
         except asyncio.exceptions.TimeoutError:
@@ -308,14 +337,14 @@ async def configure_onu_services(reader, writer, listed_uncfg, calculation, jeni
             await asyncio.sleep(0.3)
     
     #== C-DATA ==
-    else:
+    else:  
         writer.write(f"interface gpon-onu_1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}\n")
         await asyncio.sleep(0.3)
         writer.write(f"tcont 1 name PPPOE profile UP-{paket}MB-{dba_profile_suffix}\n")
         await asyncio.sleep(0.3)
         try:
             output = await asyncio.wait_for(reader.readline(), 1)
-            if "Profile exceed" in output.lower() or "Profile does not exist" in output.lower():
+            if "Parameter exceeds range" in output.lower() or "Profile does not exist" in output.lower():
                 print("🚨 Utilisasi port penuh, reconfig dengan mode MBW.")
                 needs_profile_creation = True
         except asyncio.exceptions.TimeoutError:
@@ -412,10 +441,10 @@ async def configure_onu_services(reader, writer, listed_uncfg, calculation, jeni
     
     if not needs_profile_creation:
         print("\nKONFIGURASI SELESAI")
-        print(f"✅ Serial Number : {listed_uncfg[0]}")
-        print(f"✅ ID pelanggan : {pppoe}")
-        print(f"✅ Nama pelanggan : {nama_pelanggan}")
-        print(f"✅ OLT dan ONU : {olt_name} 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
+        print(f"Serial Number   : {listed_uncfg[0]}")
+        print(f"ID pelanggan    : {pppoe}")
+        print(f"Nama pelanggan  : {nama_pelanggan}")
+        print(f"OLT dan ONU     : {olt_name} 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
 
     return needs_profile_creation
 
@@ -440,7 +469,6 @@ async def main():
             print("Input harus berupa angka.")
 
     calculation = await get_onu_placement(reader, writer, listed_uncfg, c600)
-    dba_profile_suffix = await get_dba_profile_suffix(reader, writer, listed_uncfg)
 
     nama_pelanggan = input("👤 MASUKKAN NAMA PELANGGAN : ")
     alamat = input("📍 MASUKKAN ALAMAT PELANGGAN : ")
@@ -462,12 +490,19 @@ async def main():
             cek = int(input("PILIH PAKET PELANGGAN : "))
             paket_map = {1: "10", 2: "15", 3: "20", 4: "25", 5: "30", 6: "35", 7: "40", 8: "45", 9: "100"}
             paket = paket_map.get(cek)
+
             if paket:
+                if paket in ["45", "100"]:
+                    dba_profile_suffix = "MBW"
+                else:
+                    dba_profile_suffix = await get_dba_profile_suffix(reader, writer, listed_uncfg, c600)
+                    print(f"Profile menggunakan {dba_profile_suffix}")
                 break
             else:
                 print("Paket internet tidak ditemukan. Silakan pilih nomor dari 1-9.")
         except ValueError:
             print("Input tidak valid. Silakan masukkan angka.")
+        
     
     await register_onu(reader, writer, listed_uncfg, calculation, jenismodem, nama_pelanggan, alamat, c600)
 
