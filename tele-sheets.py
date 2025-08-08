@@ -13,7 +13,6 @@ from googleapiclient.discovery import build
 load_dotenv()
 api_id = os.getenv("API_ID")
 api_hash = os.getenv("API_HASH")
-bot_token = os.getenv("BOT_TOKEN")
 spreadsheet_id = os.getenv("SPREADSHEET_ID")
 
 if not api_id or not api_hash:
@@ -238,7 +237,7 @@ def upload_to_google_sheets(data):
 # === Telegram Listener ===
 jakarta_tz = timezone("Asia/Jakarta")
 
-client = TelegramClient(session_name, api_id, api_hash).start(bot_token=bot_token)
+client = TelegramClient(session_name, api_id, api_hash)
 
 @client.on(events.NewMessage(chats=target_group_id))
 async def handle_message(event):
