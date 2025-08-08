@@ -11,14 +11,14 @@ print("# APLIKASI AUTO-CONFIGURE ONT BY DIMAS #")
 print("#########################################################")
 print("Pilih OLT yang akan dikonfigurasi")
 print(" ├── 1. BOYOLANGU")
-print(" ├── 2. BEJI")
-print(" ├── 3. DURENAN")
-print(" ├── 4. KALIDAWIR")
-print(" ├── 5. KAUMAN")
-print(" ├── 6. KEDIRI")
-print(" ├── 7. CAMPUR BARU")
-print(" ├── 8. BLITAR")
-print(" └── 9. GANDUSARI")
+print(" ├── 2. BLITAR")
+print(" ├── 3. GANDUSARI")
+print(" ├── 4. KAUMAN")
+print(" ├── 5. BEJI")
+print(" ├── 6. DURENAN")
+print(" ├── 7. KALIDAWIR")
+print(" ├── 8. KEDIRI")
+print(" └── 9. CAMPUR")
 
 olt = int(input("👀 MASUKKAN PILIHAN : "))
 username = 'n0c'
@@ -31,38 +31,38 @@ match(olt):
         vlan = "901"
         olt_name = "BOYOLANGU"
     case 2:
-        ip = "192.168.12.5"
-        vlan = "903"
-        olt_name = "BEJI"
+        ip = "192.168.12.2"
+        vlan = "904"
+        olt_name = "BLITAR"
     case 3:
-        ip = "192.168.12.6"
-        vlan = "911"
-        olt_name = "DURENAN"
+        ip = "192.168.12.3"
+        vlan = "906"
+        olt_name = "GANDUSARI"
     case 4:
-        ip = "192.168.12.7"
-        vlan = "902"
-        olt_name = "KALIDAWIR"
-    case 5:
         ip = "192.168.12.4"
         vlan = "920"
         olt_name = "KAUMAN"
+    case 5:
+        ip = "192.168.12.5"
+        vlan = "903"
+        olt_name = "BEJI"
     case 6:
+        ip = "192.168.12.6"
+        vlan = "911"
+        olt_name = "DURENAN"
+    case 7:
+        ip = "192.168.12.7"
+        vlan = "902"
+        olt_name = "KALIDAWIR"
+    case 8:
         ip = "192.168.12.8"
         vlan = "905"
         olt_name = "KEDIRI"
-    case 7:
+    case 9:
         ip = "192.168.12.9"
         c600 = True
         vlan = "911"
         olt_name = "CAMPUR"
-    case 8:
-        ip = "192.168.12.2"
-        vlan = "904"
-        olt_name = "BLITAR"
-    case 9:
-        ip = "192.168.12.3"
-        vlan = "906"
-        olt_name = "GANDUSARI"
     case _:
         print('Maaf, input tidak dimengerti')
         exit()
@@ -80,7 +80,7 @@ async def find_uncfg_onu(reader, writer, c600):
     uncfg_ONT = []
     while True:
         if c600:
-            writer.write("show pon onu uncfg" + '\n')
+            writer.write("show gpon onu uncfg" + '\n')
             identifier = 'GPON'
         else:
             writer.write("show gpon onu uncfg" + '\n')
@@ -101,7 +101,7 @@ async def find_uncfg_onu(reader, writer, c600):
             break
     for item in uncfg_ONT:
         if c600:
-            x = item.replace("    ", " ").replace(" ", ';')
+            x = item.replace("     ", " ").replace(" ", ';')
             splitter_1 = re.split(";", x)
             splitter_2 = re.split("/", splitter_1[0])
             sn = splitter_1[2] if int(splitter_2[2]) < 10 else splitter_1[1]
@@ -125,63 +125,53 @@ async def find_uncfg_onu(reader, writer, c600):
     return None
 
 async def get_onu_placement(reader, writer, listed_uncfg, c600):
-    prev_onu = None
-    calculation = None
-    
     writer.write("terminal length 0\n")
     await asyncio.sleep(0.3)
+    
+    print("\nMencari ID ONU yang kosong...")
     
     if c600:
         writer.write(f"show gpon onu state gpon_olt-1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
     else:
         writer.write(f"show gpon onu state gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}\n")
     
+    onu_ids = set()
+    full_output = ""
+    
     try:
         while True:
-            output = await asyncio.wait_for(reader.readline(), 2)
-            print(output.strip()) 
-            
-            onu_match = None
-            if c600:
-                onu_match = re.search(r'GPON-ONu_1/(\d+)/(\d+):(\d+)', output)
-            else:
-                onu_match = re.search(r'(\d+)/(\d+)/(\d+):(\d+)', output)
-
-            if onu_match:
-                onu_id = int(onu_match.group(4))
-
-                if prev_onu is None:
-                    prev_onu = onu_id
-                
-                if onu_id - prev_onu > 1:
-                    calculation = prev_onu + 1
-                    print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
-                    break
-                
-                prev_onu = onu_id
-
-    # === Check slot status ===
-            elif "ONU Number:" in output:
-                match_onu_count = re.search(r'ONU Number:\s+\d+/(\d+)', output)
-                if match_onu_count:
-                    total_onus = int(match_onu_count.group(1))
-                    if total_onus == 128:
-                        print("SLOT TERSEBUT PENUH :(")
-                        return None
-                    else:
-
-                        calculation = prev_onu + 1 if prev_onu is not None else 1
-                        print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
-                        break
-            
-            elif "No related information to show" in output:
-                calculation = 1
-                print(f"Onu kosong pada 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation}")
+            line = await asyncio.wait_for(reader.readline(), 2)
+            if not line:
                 break
-
+            full_output += line
+            
+            # Use a robust regex to capture ONU IDs from all valid lines
+            match = re.search(r'^\s*1\/1\/1:(\d+)\s+enable', line)
+            if match:
+                onu_ids.add(int(match.group(1)))
+                
     except asyncio.exceptions.TimeoutError:
         pass
     
+    print("--- Output from OLT ---")
+    print(full_output)
+    print("--- End of Output ---")
+    
+    if not onu_ids:
+        calculation = 1
+        print(f"✅ Slot 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation} kosong dan siap digunakan.")
+    else:
+        sorted_ids = sorted(list(onu_ids))
+        calculation = sorted_ids[-1] + 1
+        
+        # Check for a gap in the IDs
+        for i in range(1, sorted_ids[-1]):
+            if i not in onu_ids:
+                calculation = i
+                break
+                
+        print(f"✅ Slot 1/{listed_uncfg[1]}/{listed_uncfg[2]}:{calculation} kosong dan siap digunakan.")
+
     writer.write("terminal length 200\n")
     await asyncio.sleep(0.3)
 
@@ -193,22 +183,21 @@ async def get_dba_profile_suffix(reader, writer, listed_uncfg, c600):
     await writer.drain()
     await asyncio.sleep(0.3)
 
-    # Siapkan perintah dan regex sesuai jenis OLT
     if c600:
         interface_str = f"gpon_olt-1/{listed_uncfg[1]}/{listed_uncfg[2]}"
         command = f"show pon bandwidth dba interface {interface_str}\n"
-        regex_pattern = rf"{re.escape(interface_str)}\s+\S+\s+(\d+)\s+(\d+)\s+(\d+\.\d+)"
+        # Regex for C600 output: matches the GPON channel line and extracts the rate.
+        regex_pattern = rf"{re.escape(interface_str)}\s+2\(GPON\)\s+\S+\s+\S+\s+FALSE\s+(\d+\.\d+)"
     else:
         interface_str = f"gpon-olt_1/{listed_uncfg[1]}/{listed_uncfg[2]}"
         command = f"show pon bandwidth dba interface {interface_str}\n"
+        # Regex for non-C600 output (your original pattern).
         regex_pattern = rf"{re.escape(interface_str)}\s+\S+\s+(\d+)\s+(\d+)\s+(\d+\.\d+)"
 
-    # Kirim perintah cek bandwidth
     writer.write(command)
     await writer.drain()
     await asyncio.sleep(1)
 
-    rate_percentage = 0.0
     THRESHOLD_RATE = 75.0
 
     try:
@@ -216,27 +205,26 @@ async def get_dba_profile_suffix(reader, writer, listed_uncfg, c600):
             output_bw = await asyncio.wait_for(reader.readline(), timeout=3)
             if not output_bw:
                 break
-
+            
             output_str = output_bw.strip()
-
             match = re.search(regex_pattern, output_str)
             if match:
-                configured = int(match.group(1))
-                free = int(match.group(2))
-                rate = float(match.group(3))
-
-                used = configured - free
-                utilization = (used / configured) * 100
-
-                print(f"Configured: {configured}, Free: {free}, Used: {used}, Utilization: {utilization:.1f}%, Rate: {rate:.1f}%")
-
-                # Langsung return nilai FIX atau MBW
-                return "MBW" if rate >= THRESHOLD_RATE else "FIX"
-
+                if c600:
+                    rate = float(match.group(1))
+                    print(f"Rate: {rate:.1f}%")
+                    return "MBW" if rate >= THRESHOLD_RATE else "FIX"
+                else:
+                    configured = int(match.group(1))
+                    free = int(match.group(2))
+                    rate = float(match.group(3))
+                    used = configured - free
+                    utilization = (used / configured) * 100
+                    print(f"Configured: {configured}, Free: {free}, Used: {used}, Utilization: {utilization:.1f}%, Rate: {rate:.1f}%")
+                    return "MBW" if rate >= THRESHOLD_RATE else "FIX"
     except asyncio.TimeoutError:
         print("❌ Timeout saat membaca output bandwidth dari OLT.")
 
-    print(f"Final rate percentage: {rate_percentage}%")
+    print("Final rate percentage not found, defaulting to FIX.")
     return "FIX"
 
 async def create_dba_profile(reader, writer, dba_profile_suffix, paket):
