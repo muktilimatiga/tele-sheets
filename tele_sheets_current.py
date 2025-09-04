@@ -69,36 +69,133 @@ def extract_row(item):
     tiket = extract_field(msg, 'Ref')
     return tanggal, [tanggal, waktu, nama, kendala, status, action, note, tiket]
 
-# (Keep all your Google Sheets functions exactly as they were)
-# format_status_cell, get_sheet_id, and upload_to_google_sheets...
+# === Google Sheets Formatting ===
+def format_status_cell(sheet_id, row_idx, status, color_map):
+    if status not in color_map:
+        return None
+    return {
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": row_idx - 1,
+                "endRowIndex": row_idx,
+                "startColumnIndex": 4,
+                "endColumnIndex": 5
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "backgroundColor": color_map[status]
+                }
+            },
+            "fields": "userEnteredFormat.backgroundColor"
+        }
+    }
+# === Google Sheets Helper ===
 def get_sheet_id(service, spreadsheet_id, sheet_name):
-    # ... (your existing code)
     spreadsheet = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     for sheet in spreadsheet["sheets"]:
         if sheet["properties"]["title"] == sheet_name:
             return sheet["properties"]["sheetId"]
     return None
 
-
 def upload_to_google_sheets(data):
-    # ... (your existing code for this function)
-    # This function will be called directly after the DB insert.
     if not os.path.exists(service_account_file):
         print(f"[!] {service_account_file} not found!")
         return False
-    # The rest of your function logic remains the same
+
     try:
         creds = Credentials.from_service_account_file(
             service_account_file,
             scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
         service = build("sheets", "v4", credentials=creds)
-        # ... and so on
-        return True
-    except Exception as e:
-        print(f"[GSHEETS ERROR] Upload failed: {e}")
-        return False
+        sheet = service.spreadsheets()
 
+        grouped = defaultdict(list)
+        for item in data:
+            tanggal, row = extract_row(item)
+            current_date = datetime.now().strftime("%d-%B-%Y")
+            grouped[current_date].append(row)
+
+        color_map = {
+            "open":       {"red": 0.2, "green": 0.6, "blue": 1.0},
+            "proses":     {"red": 0.4, "green": 0.9, "blue": 0.4},
+            "done":       {"red": 0.85, "green": 0.85, "blue": 0.85},
+            "fwd teknis": {"red": 1.0, "green": 0.6, "blue": 0.6},
+        }
+
+        for sheet_name, rows in grouped.items():
+            header = ["Tanggal", "Waktu", "Nama Pelanggan", "Kendala", "Status", "Action", "Note", "Nomor Tiket"]
+
+            try:
+                sheet.batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body={"requests": [{"addSheet": {"properties": {"title": sheet_name}}}]}
+                ).execute()
+            except:
+                pass
+
+            sheet.values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"{sheet_name}!A1",
+                valueInputOption="RAW",
+                body={"values": [header]}
+            ).execute()
+
+            sheet_id = get_sheet_id(service, spreadsheet_id, sheet_name)
+            result = sheet.values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f"{sheet_name}!A2:H"
+            ).execute()
+            existing_rows = result.get("values", [])
+
+            ticket_map = {row[7]: idx + 2 for idx, row in enumerate(existing_rows) if len(row) >= 8}
+            format_requests = []
+
+            for row in rows:
+                tiket = row[7]
+                status, action, note = row[4], row[5], row[6]
+                found = False
+
+                if tiket in ticket_map:
+                    row_idx = ticket_map[tiket]
+                    update_range = f"{sheet_name}!E{row_idx}:H{row_idx}"
+                    sheet.values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range=update_range,
+                        valueInputOption="RAW",
+                        body={"values": [[status, action, note, tiket]]}
+                    ).execute()
+                    found = True
+
+                if not found:
+                    append_result = sheet.values().append(
+                        spreadsheetId=spreadsheet_id,
+                        range=f"{sheet_name}!A2",
+                        valueInputOption="RAW",
+                        insertDataOption="INSERT_ROWS",
+                        body={"values": [row]}
+                    ).execute()
+
+                    match = re.search(rf"{sheet_name}!A(\d+)", append_result["updates"]["updatedRange"])
+                    if match:
+                        row_idx = int(match.group(1))
+                        fmt = format_status_cell(sheet_id, row_idx, status, color_map)
+                        if fmt:
+                            format_requests.append(fmt)
+
+            if format_requests:
+                sheet.batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body={"requests": format_requests}
+                ).execute()
+
+        return True
+
+    except Exception as e:
+        print(f"[!] Upload failed: {e}")
+
+    return False
 
 # === Telegram Listener ===
 jakarta_tz = timezone("Asia/Jakarta")
