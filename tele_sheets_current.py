@@ -113,9 +113,18 @@ def upload_to_google_sheets(data):
 
         grouped = defaultdict(list)
         for item in data:
-            tanggal, row = extract_row(item)
-            current_date = datetime.now().strftime("%d-%B-%Y")
-            grouped[current_date].append(row)
+            tanggal = item["tanggal"]
+            row = [
+                item["tanggal"],
+                item["waktu"],
+                item["nama"],
+                item["kendala"],
+                item["status"],
+                item["action"],
+                item.get("note", ""),
+                item["tiket"],
+            ]
+            grouped[tanggal].append(row)
 
         color_map = {
             "open":       {"red": 0.2, "green": 0.6, "blue": 1.0},
@@ -212,28 +221,31 @@ async def handle_message(event):
     for keyword in filter_keywords_komplain:
         if keyword in upper_msg:
             # 1. Prepare the data object
-            raw_data = {
-                "timestamp": event.message.date.astimezone(jakarta_tz).strftime('%d-%B-%Y %H:%M'),
-                "message": message,
-            }
-            
-            # gunakan extract_row untuk ambil field
-            tanggal, row = extract_row(raw_data)
+            dt = event.message.date.astimezone(jakarta_tz)
+            tanggal = dt.strftime('%d-%B-%Y')
+            waktu = dt.strftime('%H:%M')
             
             data = {
                 "tanggal": tanggal,
-                "waktu": row[1],
-                "nama": row[2],
-                "kendala": row[3],
-                "status": row[4],
-                "action": row[5],
-                "note": row[6],
-                "tiket": row[7]
+                "waktu": waktu,
+                "nama": extract_field(message, "Nama"),
+                "kendala": extract_field(message, "Desc"),
+                "status": classify_status(message),
+                "action": extract_field(message, "Action") or "-",
+                "note": "",
+                "tiket": extract_field(message, "Ref"),
             }
-            
+
             try:
-                result = komplain_collection.insert_one(data)
-                print(f"[DB] Inserted structured doc: {result.inserted_id}")
+                result = komplain_collection.update_one(
+                    {"tiket": data["tiket"]},   # cari berdasarkan nomor tiket
+                    {"$set": data},             # update semua field
+                    upsert=True                 # insert kalau belum ada
+                )
+                if result.matched_count > 0:
+                    print(f"[DB] Updated tiket {data['tiket']}")
+                else:
+                    print(f"[DB] Inserted new tiket {data['tiket']}")
             except Exception as e:
                 print(f"[DB ERROR] Failed to insert document. Error: {e}")
 
