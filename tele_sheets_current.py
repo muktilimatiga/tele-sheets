@@ -30,7 +30,7 @@ os.makedirs(os.path.dirname(session_name), exist_ok=True)
 try:
     print("Connecting to MongoDB...")
     mongo_client = MongoClient(MONGO_URI)
-    db = mongo_client.get_database("telegram_data")
+    db = mongo_client.get_database("log_pelanggan")
     komplain_collection = db.get_collection("komplain")
     mongo_client.admin.command('ping')
     print("MongoDB connection successful.")
