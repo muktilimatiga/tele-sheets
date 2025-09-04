@@ -212,17 +212,31 @@ async def handle_message(event):
     for keyword in filter_keywords_komplain:
         if keyword in upper_msg:
             # 1. Prepare the data object
-            data = {
+            raw_data = {
                 "timestamp": event.message.date.astimezone(jakarta_tz).strftime('%d-%B-%Y %H:%M'),
                 "message": message,
             }
-
-            # 2. Insert into MongoDB
+            
+            # gunakan extract_row untuk ambil field
+            tanggal, row = extract_row(raw_data)
+            
+            data = {
+                "tanggal": tanggal,
+                "waktu": row[1],
+                "nama": row[2],
+                "kendala": row[3],
+                "status": row[4],
+                "action": row[5],
+                "note": row[6],
+                "tiket": row[7]
+            }
+            
             try:
                 result = komplain_collection.insert_one(data)
-                print(f"[DB] Successfully inserted document with ID: {result.inserted_id}")
+                print(f"[DB] Inserted structured doc: {result.inserted_id}")
             except Exception as e:
                 print(f"[DB ERROR] Failed to insert document. Error: {e}")
+
 
             # 3. Upload to Google Sheets
             print("[GSHEETS] Attempting to upload...")
